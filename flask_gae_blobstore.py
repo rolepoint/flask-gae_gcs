@@ -1,24 +1,23 @@
 """
-  flask_gae_blobstore
+  flask_gae_cloud_storage
   ~~~~~~~~~~~~~~~~~~~
 
-  Flask extension for working with the blobstore & files apis on
-  App Engine.
+  Flask extension for working with Google Cloud Storage on
+  Google App Engine.
 
   :copyright: (c) 2013 by gregorynicholas.
   :license: BSD, see LICENSE for more details.
 """
 import re
 import time
-# Uses of a deprecated module 'string'
-# pylint: disable-msg=W0402
 import string
 import random
 import logging
+import cloudstorage as gcs
 from flask import Response, request
 from werkzeug import exceptions
 from functools import wraps
-from google.appengine.api import files
+from google.appengine.api import files, app_identity
 from google.appengine.ext import blobstore
 from google.appengine.ext.blobstore import BlobKey, create_rpc
 
@@ -61,6 +60,11 @@ OPTIONS = ['OPTIONS', 'HEAD', 'GET', 'POST', 'PUT']
 HEADERS = ['Accept', 'Content-Type', 'Origin', 'X-Requested-With']
 #:
 MIMETYPE = 'application/json'
+
+my_default_retry_params = gcs.RetryParams(initial_delay=0.2,
+                                          max_delay=5.0,
+                                          backoff_factor=2,
+                                          max_retry_period=15)
 
 
 class RemoteResponse(Response):
@@ -165,6 +169,9 @@ def save_blobs(fields, validators=None):
 
       :returns: Instance of a `BlobUploadResultSet`.
     '''
+    bucket_name = app_identity.get_default_gcs_bucket_name()
+    bucket = '/' + bucket_name + '/'
+
     if validators is None:
         validators = [
             validate_min_size,
@@ -175,8 +182,10 @@ def save_blobs(fields, validators=None):
     i = 0
     for name, field in fields:
         value = field.stream.read()
+        filename = re.sub(r'^.*\\', '', field.filename.decode('utf-8'))
+        bucket_filename = bucket + filename
         result = BlobUploadResult(
-            name=re.sub(r'^.*\\', '', field.filename.decode('utf-8')),
+            name=bucket_filename,
             type=field.mimetype,
             size=len(value),
             field=field,
@@ -188,7 +197,7 @@ def save_blobs(fields, validators=None):
                     result.error_msg = MSG_INVALID_FILE_POSTED
                     logging.warn('Error in file upload: %s', result.error_msg)
                 else:
-                    result.blob_key = write_to_blobstore(
+                    result.blob_key = write_to_gcs(
                         result.value, mime_type=result.type, name=result.name)
                     if result.blob_key:
                         result.successful = True
@@ -196,7 +205,7 @@ def save_blobs(fields, validators=None):
                         result.successful = False
             results.append(result)
         else:
-            result.blob_key = write_to_blobstore(
+            result.blob_key = write_to_gcs(
                 result.value, mime_type=result.type, name=result.name)
             logging.error('result.blob_key: %s', result.blob_key)
             if result.blob_key:
@@ -274,7 +283,7 @@ def validate_file_type(result, accept_file_types=UPLOAD_ACCEPT_FILE_TYPES):
     return True
 
 
-def write_to_blobstore(data, mime_type, name=None):
+def write_to_gcs(data, mime_type, name=None):
     '''Writes a file to the App Engine blobstore and returns an instance of a
     BlobKey if successful.
 
@@ -288,26 +297,20 @@ def write_to_blobstore(data, mime_type, name=None):
         name = ''.join(random.choice(string.letters)
                        for x in range(DEFAULT_NAME_LEN))
 
-    blob = files.blobstore.create(
-        mime_type=mime_type,
-        _blobinfo_uploaded_filename=name)
-    with files.open(blob, 'a', exclusive_lock=True) as f:
-        f.write(data)
-    files.finalize(blob)
-    result = files.blobstore.get_blob_key(blob)
-    # issue with the local development SDK. we can only write to the blobstore
-    # so fast, so set a retry_count and delay the execution thread between
-    # each attempt..
-    for i in range(1, WRITE_MAX_RETRIES):
-        if result:
-            break
-        else:
-            logging.debug(
-                'blob still None.. will retry to write to blobstore..')
-            time.sleep(WRITE_SLEEP_SECONDS)
-            result = files.blobstore.get_blob_key(blob)
-        logging.debug('File written to blobstore: key: "%s"', result)
-    return result
+    write_retry_params = gcs.RetryParams(backoff_factor=1.1)
+    gcs_file = gcs.open(name,
+                        'w',
+                        content_type='text/plain',
+                        options={'x-goog-meta-foo': 'foo',
+                                 'x-goog-meta-bar': 'bar'},
+                        retry_params=write_retry_params)
+
+    gcs_file.write(data)
+    gcs_file.close()
+
+    logging.info(gcs.stat(name))
+
+    return name
 
 
 def send_blob_download():
