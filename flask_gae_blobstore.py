@@ -305,7 +305,9 @@ def write_to_gcs(data, mime_type, name=None):
                         'w',
                         content_type=mime_type,
                         options = {
-                            'x-goog-meta-filename': name
+                            'x-goog-meta-filename': name,
+                            'Content-Disposition': 'attachment; filename={}'
+                                .format(name)
                         },
                         retry_params=write_retry_params)
 
