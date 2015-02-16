@@ -10,6 +10,7 @@
 """
 import re
 import time
+import uuid
 import string
 import random
 import logging
@@ -105,7 +106,7 @@ class BlobUploadResult:
     '''
       :param successful:
       :param error_msg:
-      :param blob_key:
+      :param uuid:
       :param name:
       :param type:
       :param size:
@@ -116,7 +117,7 @@ class BlobUploadResult:
     def __init__(self, name, type, size, field, value):
         self.successful = False
         self.error_msg = ''
-        self.blob_key = None
+        self.uuid = None
         self.name = name
         self.type = type
         self.size = size
@@ -134,7 +135,7 @@ class BlobUploadResult:
         return {
             'successful': self.successful,
             'error_msg': self.error_msg,
-            'blob_key': str(self.blob_key),
+            'uuid': str(self.uuid),
             'name': self.name,
             'type': self.type,
             'size': self.size,
@@ -169,8 +170,6 @@ def save_blobs(fields, validators=None):
 
       :returns: Instance of a `BlobUploadResultSet`.
     '''
-    bucket_name = app_identity.get_default_gcs_bucket_name()
-    bucket = '/' + bucket_name + '/'
 
     if validators is None:
         validators = [
@@ -183,9 +182,8 @@ def save_blobs(fields, validators=None):
     for name, field in fields:
         value = field.stream.read()
         filename = re.sub(r'^.*\\', '', field.filename.decode('utf-8'))
-        bucket_filename = bucket + filename
         result = BlobUploadResult(
-            name=bucket_filename,
+            name=filename,
             type=field.mimetype,
             size=len(value),
             field=field,
@@ -197,18 +195,18 @@ def save_blobs(fields, validators=None):
                     result.error_msg = MSG_INVALID_FILE_POSTED
                     logging.warn('Error in file upload: %s', result.error_msg)
                 else:
-                    result.blob_key = write_to_gcs(
+                    result.uuid = write_to_gcs(
                         result.value, mime_type=result.type, name=result.name)
-                    if result.blob_key:
+                    if result.uuid:
                         result.successful = True
                     else:
                         result.successful = False
             results.append(result)
         else:
-            result.blob_key = write_to_gcs(
+            result.uuid = write_to_gcs(
                 result.value, mime_type=result.type, name=result.name)
             logging.error('result.blob_key: %s', result.blob_key)
-            if result.blob_key:
+            if result.uuid:
                 result.successful = True
             else:
                 result.successful = False
@@ -284,33 +282,37 @@ def validate_file_type(result, accept_file_types=UPLOAD_ACCEPT_FILE_TYPES):
 
 
 def write_to_gcs(data, mime_type, name=None):
-    '''Writes a file to the App Engine blobstore and returns an instance of a
-    BlobKey if successful.
+    '''Writes a file to Google Cloud Storage and returns the file name
+    if successful.
 
-      :param data: Blob data.
-      :param mime_type: String, mime type of the blob.
-      :param name: String, name of the blob.
+      :param data: Data to be stored.
+      :param mime_type: String, mime type of the data.
+      :param name: String, name of the data.
 
-      :returns: Instance of a `BlobKey`.
+      :returns: String, filename.
     '''
     if not name:
         name = ''.join(random.choice(string.letters)
                        for x in range(DEFAULT_NAME_LEN))
 
+    bucket_name = app_identity.get_default_gcs_bucket_name()
+
+    resume_uuid = uuid.uuid4()
+    bucket_filename = '/' + bucket_name + '/' + str(resume_uuid)
+
     write_retry_params = gcs.RetryParams(backoff_factor=1.1)
-    gcs_file = gcs.open(name,
+    gcs_file = gcs.open(bucket_filename,
                         'w',
-                        content_type='text/plain',
-                        options={'x-goog-meta-foo': 'foo',
-                                 'x-goog-meta-bar': 'bar'},
+                        content_type=mime_type,
+                        options = {
+                            'x-goog-meta-filename': name
+                        },
                         retry_params=write_retry_params)
 
     gcs_file.write(data)
     gcs_file.close()
 
-    logging.info(gcs.stat(name))
-
-    return name
+    return str(resume_uuid)
 
 
 def send_blob_download():
