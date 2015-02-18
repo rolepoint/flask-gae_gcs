@@ -205,7 +205,7 @@ def save_blobs(fields, validators=None):
         else:
             result.uuid = write_to_gcs(
                 result.value, mime_type=result.type, name=result.name)
-            logging.error('result.blob_key: %s', result.blob_key)
+            logging.error('result.uuid: %s', result.uuid)
             if result.uuid:
                 result.successful = True
             else:
