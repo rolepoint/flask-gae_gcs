@@ -1,39 +1,30 @@
 """
-  flask_gae_blobstore
+  flask_gae_gcs
   ~~~~~~~~~~~~~~~~~~~
 
-  Flask extension for working with the blobstore & files apis on
-  App Engine.
+  Flask extension for working with Google Cloud Storage on
+  Google App Engine.
 
-  :copyright: (c) 2013 by gregorynicholas.
   :license: BSD, see LICENSE for more details.
 """
 import re
 import time
-# Uses of a deprecated module 'string'
-# pylint: disable-msg=W0402
+import uuid
 import string
 import random
 import logging
+import cloudstorage as gcs
 from flask import Response, request
 from werkzeug import exceptions
 from functools import wraps
-from google.appengine.api import files
-from google.appengine.ext import blobstore
-from google.appengine.ext.blobstore import BlobKey, create_rpc
+from google.appengine.api import app_identity
 
 __all__ = [
-    'delete', 'delete_async', 'fetch_data', 'fetch_data_async', 'BlobKey',
     'WRITE_MAX_RETRIES', 'WRITE_SLEEP_SECONDS', 'DEFAULT_NAME_LEN',
     'MSG_INVALID_FILE_POSTED', 'UPLOAD_MIN_FILE_SIZE', 'UPLOAD_MAX_FILE_SIZE',
     'UPLOAD_ACCEPT_FILE_TYPES', 'ORIGINS', 'OPTIONS', 'HEADERS', 'MIMETYPE',
-    'RemoteResponse', 'BlobUploadResultSet', 'BlobUploadResult', 'upload_blobs',
-    'save_blobs', 'write_to_blobstore']
-
-delete = blobstore.delete
-delete_async = blobstore.delete_async
-fetch_data = blobstore.fetch_data
-fetch_data_async = blobstore.fetch_data_async
+    'RemoteResponse', 'FileUploadResultSet', 'FileUploadResult', 'upload_files',
+    'save_files', 'write_to_gcs']
 
 #:
 WRITE_MAX_RETRIES = 3
@@ -78,17 +69,18 @@ class RemoteResponse(Response):
         Response.__init__(self, response=response, mimetype=mimetype, **kw)
         self._fixcors()
 
+
     def _fixcors(self):
         self.headers['Access-Control-Allow-Origin'] = ORIGINS
         self.headers['Access-Control-Allow-Methods'] = ', '.join(OPTIONS)
         self.headers['Access-Control-Allow-Headers'] = ', '.join(HEADERS)
 
 
-class BlobUploadResultSet(list):
+class FileUploadResultSet(list):
 
     def to_dict(self):
         '''
-          :returns: List of `BlobUploadResult` as `dict`s.
+          :returns: List of `FileUploadResult` as `dict`s.
         '''
         result = []
         for field in self:
@@ -96,12 +88,12 @@ class BlobUploadResultSet(list):
         return result
 
 
-class BlobUploadResult:
+class FileUploadResult:
 
     '''
       :param successful:
       :param error_msg:
-      :param blob_key:
+      :param uuid:
       :param name:
       :param type:
       :param size:
@@ -109,19 +101,22 @@ class BlobUploadResult:
       :param value:
     '''
 
-    def __init__(self, name, type, size, field, value):
+    def __init__(self, name, type, size, field, value, bucket_name):
         self.successful = False
         self.error_msg = ''
-        self.blob_key = None
+        self.uuid = None
         self.name = name
         self.type = type
         self.size = size
         self.field = field
         self.value = value
+        self.bucket_name = None
+
 
     @property
-    def blob_info(self):
-        return blobstore.get(self.blob_key)
+    def file_info(self):
+        return gcs.stat(get_gcs_filename(self.uuid, self.bucket_name))
+
 
     def to_dict(self):
         '''
@@ -130,7 +125,7 @@ class BlobUploadResult:
         return {
             'successful': self.successful,
             'error_msg': self.error_msg,
-            'blob_key': str(self.blob_key),
+            'uuid': str(self.uuid),
             'name': self.name,
             'type': self.type,
             'size': self.size,
@@ -139,48 +134,65 @@ class BlobUploadResult:
             # 'value': self.value,
         }
 
+def get_gcs_filename(filename, bucket_name=None):
+    if bucket_name:
+        return '/' + bucket_name + '/' + filename
+    return '/' + app_identity.get_default_gcs_bucket_name() + '/' + filename
 
-def upload_blobs(validators=None):
-    '''Method decorator for writing posted files to the `blobstore` using the
-    App Engine files api. Passes an argument to the method with a list of
-    `BlobUploadResult` with `BlobKey`, name, type, size for each posted input file.
+
+def upload_files(validators=None, retry_params=None, bucket_name=None):
+    '''Method decorator for writing posted files to Google Cloud Storage using
+    the App Engine CloudStorage api. Passes an argument to the method with a
+    list of `FileUploadResult` with UUID, name, type, size for each posted
+    input file.
 
       :param validators: List of callable objects.
+      :param retry_params: `RetryParams` object from `cloudstorage`
+      :param bucket_name: String of custom bucket name.
     '''
     def wrapper(fn):
         @wraps(fn)
         def decorated(*args, **kw):
-            return fn(uploads=save_blobs(
-                      fields=_upload_fields(), validators=validators), *args, **kw)
+            return fn(uploads=save_files(
+                          fields=_upload_fields(),
+                          validators=validators,
+                          retry_params=retry_params,
+                          bucket_name=bucket_name
+                          ), *args, **kw)
         return decorated
     return wrapper
 
 
-def save_blobs(fields, validators=None):
-    '''Returns a list of `BlobUploadResult` with BlobKey, name, type, size for
+def save_files(fields, validators=None, retry_params=None, bucket_name=None):
+    '''Returns a list of `FileUploadResult` with UUID, name, type, size for
     each posted file.
 
       :param fields: List of `cgi.FieldStorage` objects.
       :param validators: List of callable objects.
+      :param retry_params: `RetryParams` object from `cloudstorage`
+      :param bucket_name: String of custom bucket name.
 
-      :returns: Instance of a `BlobUploadResultSet`.
+      :returns: Instance of a `FileUploadResultSet`.
     '''
+
     if validators is None:
         validators = [
             validate_min_size,
             # validate_file_type,
             # validate_max_size,
         ]
-    results = BlobUploadResultSet()
+    results = FileUploadResultSet()
     i = 0
     for name, field in fields:
         value = field.stream.read()
-        result = BlobUploadResult(
-            name=re.sub(r'^.*\\', '', field.filename.decode('utf-8')),
+        filename = re.sub(r'^.*\\', '', field.filename.decode('utf-8'))
+        result = FileUploadResult(
+            name=filename,
             type=field.mimetype,
             size=len(value),
             field=field,
-            value=value)
+            value=value,
+            bucket_name=bucket_name if bucket_name else None)
         if validators:
             for fn in validators:
                 if not fn(result):
@@ -188,18 +200,20 @@ def save_blobs(fields, validators=None):
                     result.error_msg = MSG_INVALID_FILE_POSTED
                     logging.warn('Error in file upload: %s', result.error_msg)
                 else:
-                    result.blob_key = write_to_blobstore(
-                        result.value, mime_type=result.type, name=result.name)
-                    if result.blob_key:
+                    result.uuid = write_to_gcs(
+                        result.value, mime_type=result.type, name=result.name,
+                        retry_params=retry_params, bucket_name=bucket_name)
+                    if result.uuid:
                         result.successful = True
                     else:
                         result.successful = False
             results.append(result)
         else:
-            result.blob_key = write_to_blobstore(
-                result.value, mime_type=result.type, name=result.name)
-            logging.error('result.blob_key: %s', result.blob_key)
-            if result.blob_key:
+            result.uuid = write_to_gcs(
+                result.value, mime_type=result.type, name=result.name,
+                retry_params=retry_params, bucket_name=bucket_name)
+            logging.error('result.uuid: %s', result.uuid)
+            if result.uuid:
                 result.successful = True
             else:
                 result.successful = False
@@ -236,7 +250,7 @@ def get_field_size(field):
 def validate_max_size(result, max_file_size=UPLOAD_MAX_FILE_SIZE):
     '''Validates an upload input based on maximum size.
 
-      :param result: Instance of `BlobUploadResult`.
+      :param result: Instance of `FileUploadResult`.
       :param max_file_size: Integer.
       :returns: Boolean, True if field validates.
     '''
@@ -249,7 +263,7 @@ def validate_max_size(result, max_file_size=UPLOAD_MAX_FILE_SIZE):
 def validate_min_size(result, min_file_size=UPLOAD_MIN_FILE_SIZE):
     '''Validates an upload input based on minimum size.
 
-      :param result: Instance of `BlobUploadResult`.
+      :param result: Instance of `FileUploadResult`.
       :param min_file_size: Integer.
       :returns: Boolean, True if field validates.
     '''
@@ -263,8 +277,9 @@ def validate_file_type(result, accept_file_types=UPLOAD_ACCEPT_FILE_TYPES):
     '''Validates an upload input based on accepted mime types.
     If validation fails, sets an error property to the field arg dict.
 
-      :param result: Instance of `BlobUploadResult`.
+      :param result: Instance of `FileUploadResult`.
       :param accept_file_types: Instance of a regex.
+
       :returns: Boolean, True if field validates.
     '''
     # only allow images to be posted to this handler
@@ -274,57 +289,43 @@ def validate_file_type(result, accept_file_types=UPLOAD_ACCEPT_FILE_TYPES):
     return True
 
 
-def write_to_blobstore(data, mime_type, name=None):
-    '''Writes a file to the App Engine blobstore and returns an instance of a
-    BlobKey if successful.
+def write_to_gcs(data, mime_type, name=None, retry_params=None,
+    bucket_name=None):
+    '''Writes a file to Google Cloud Storage and returns the file name
+    if successful.
 
-      :param data: Blob data.
-      :param mime_type: String, mime type of the blob.
-      :param name: String, name of the blob.
+      :param data: Data to be stored.
+      :param mime_type: String, mime type of the data.
+      :param name: String, name of the data.
+      :param retry_params: `RetryParams` object from `cloudstorage`
+      :param bucket_name: String of custom bucket name.
 
-      :returns: Instance of a `BlobKey`.
+      :returns: String, filename.
     '''
     if not name:
         name = ''.join(random.choice(string.letters)
                        for x in range(DEFAULT_NAME_LEN))
 
-    blob = files.blobstore.create(
-        mime_type=mime_type,
-        _blobinfo_uploaded_filename=name)
-    with files.open(blob, 'a', exclusive_lock=True) as f:
-        f.write(data)
-    files.finalize(blob)
-    result = files.blobstore.get_blob_key(blob)
-    # issue with the local development SDK. we can only write to the blobstore
-    # so fast, so set a retry_count and delay the execution thread between
-    # each attempt..
-    for i in range(1, WRITE_MAX_RETRIES):
-        if result:
-            break
-        else:
-            logging.debug(
-                'blob still None.. will retry to write to blobstore..')
-            time.sleep(WRITE_SLEEP_SECONDS)
-            result = files.blobstore.get_blob_key(blob)
-        logging.debug('File written to blobstore: key: "%s"', result)
-    return result
+    new_uuid = str(uuid.uuid4())
+    bucket_filename = get_gcs_filename(new_uuid, bucket_name)
 
+    if retry_params:
+        default_retry_params = retry_params
+    else:
+        default_retry_params = gcs.RetryParams(backoff_factor=1.1)
 
-def send_blob_download():
-    '''Sends a file to a client for downloading.
+    options = {
+        'x-goog-meta-filename': name,
+        'Content-Disposition': 'attachment; filename={}'
+            .format(name)
+    }
 
-      :param data: Stream data that will be sent as the file contents.
-      :param filename: String, name of the file.
-      :param contenttype: String, content-type of the file.
-    '''
-    def wrapper(fn):
-        @wraps(fn)
-        def decorated(*args, **kw):
-            data, filename, contenttype = fn(*args, **kw)
-            headers = {
-                'Content-Type': contenttype,
-                'Content-Encoding': contenttype,
-                'Content-Disposition': 'attachment; filename={}'.format(filename)}
-            return Response(data, headers=headers)
-        return decorated
-    return wrapper
+    gcs_file = gcs.open(bucket_filename,
+                        'w',
+                        content_type=mime_type,
+                        options=options,
+                        retry_params=default_retry_params)
+    gcs_file.write(data)
+    gcs_file.close()
+
+    return new_uuid

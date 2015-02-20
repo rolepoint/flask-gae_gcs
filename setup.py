@@ -1,24 +1,22 @@
 #!/usr/bin/env python
 """
-flask-gae_blobstore
+flask-gae_gcs
 ~~~~~~~~~~~~~~~~~~~
 
-flask extension for working with the blobstore & files apis on
-app engine.
+flask extension for working with Google Cloud Storage & Cloudstorage API on
+Google App Engine.
 
 
 links
 `````
 
-* `docs <http://gregorynicholas.github.io/flask-gae_blobstore>`_
-* `source <http://github.com/gregorynicholas/flask-gae_blobstore>`_
-* `package <http://packages.python.org/flask-gae_blobstore>`_
-* `travis-ci <http://travis-ci.org/gregorynicholas/flask-gae_blobstore>`_
+* `docs <http://siamerp.github.io/flask-gae_gcs>`_
+* `source <http://github.com/siamerp/flask-gae_gcs>`
 
 """
 from setuptools import setup
 
-__version__ = "1.0.2"
+__version__ = "0.1.0"
 
 with open("requirements.txt", "r") as f:
   requires = f.readlines()
@@ -28,17 +26,17 @@ with open("README.md", "r") as f:
 
 
 setup(
-  name='flask-gae_blobstore',
+  name='flask-gae_gcs',
   version=__version__,
-  url='http://github.com/gregorynicholas/flask-gae_blobstore',
+  url='http://github.com/siamerp/flask-gae_blobstore',
   license='MIT',
-  author='gregorynicholas',
-  author_email='gn@gregorynicholas.com',
+  author='siamerp',
+  author_email='siame@rolepoint.com',
   description=__doc__,
   long_description=long_description,
   py_modules=[
-    'flask_gae_blobstore',
-    'flask_gae_blobstore_tests',
+    'flask_gae_gcs',
+    'flask_gae_gcs_tests',
   ],
   zip_safe=False,
   platforms='any',
@@ -50,7 +48,7 @@ setup(
   ],
   dependency_links=[
   ],
-  test_suite='flask_gae_blobstore_tests',
+  test_suite='flask_gae_gcs_tests',
   classifiers=[
     'Development Status :: 4 - Beta',
     'Environment :: Web Environment',

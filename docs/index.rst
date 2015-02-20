@@ -8,10 +8,8 @@ links
 -----
 
 * :ref:`genindex`
-* `docs <http://gregorynicholas.github.io/flask-gae_blobstore>`_
-* `source <http://github.com/gregorynicholas/flask-gae_blobstore>`_
-* `package <http://packages.python.org/flask-gae_blobstore>`_
-* `travis-ci <http://travis-ci.org/gregorynicholas/flask-gae_blobstore>`_
+* `docs <http://siamerp.github.io/flask-gae_gcs>`_
+* `source <http://github.com/siamerp/flask-gae_gcs>`_
 * :doc:`changelog </changelog>`
 
 
@@ -20,13 +18,13 @@ getting started
 
 install with **pip**
 
-    pip install flask-gae_blobstore
+    pip install flask-gae_gcs
 
 
 api
 ---
 
-.. module:: flask_gae_blobstore
+.. module:: flask_gae_gcs
 
 .. members: WRITE_SLEEP_SECONDS, WRITE_MAX_RETRIES, DEFAULT_NAME_LEN, MSG_INVALID_FILE_POSTED, UPLOAD_MIN_FILE_SIZE, UPLOAD_MAX_FILE_SIZE, UPLOAD_ACCEPT_FILE_TYPES, ORIGINS, OPTIONS, HEADERS, MIMETYPE
 
