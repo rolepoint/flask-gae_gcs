@@ -290,7 +290,7 @@ def validate_file_type(result, accept_file_types=UPLOAD_ACCEPT_FILE_TYPES):
 
 
 def write_to_gcs(data, mime_type, name=None, retry_params=None,
-    bucket_name=None):
+    bucket_name=None, force_download=False):
     '''Writes a file to Google Cloud Storage and returns the file name
     if successful.
 
@@ -299,6 +299,8 @@ def write_to_gcs(data, mime_type, name=None, retry_params=None,
       :param name: String, name of the data.
       :param retry_params: `RetryParams` object from `cloudstorage`
       :param bucket_name: String of custom bucket name.
+      :param force_download: Boolean, whether or not file will be a forced
+                             download
 
       :returns: String, filename.
     '''
@@ -312,13 +314,20 @@ def write_to_gcs(data, mime_type, name=None, retry_params=None,
     if retry_params:
         default_retry_params = retry_params
     else:
-        default_retry_params = gcs.RetryParams(backoff_factor=1.1)
+        default_retry_params = gcs.RetryParams(initial_delay=0.2,
+                                               max_delay=5.0,
+                                               backoff_factor=2,
+                                               max_retry_period=15)
 
-    options = {
-        'x-goog-meta-filename': name,
-        'Content-Disposition': 'attachment; filename={}'
-            .format(name)
-    }
+    options = {}
+    if name:
+        options.update({b'x-goog-meta-filename': name})
+
+    if force_download:
+        options.update({
+            b'Content-Disposition': 'attachment; filename={}'
+                .format(name)
+        })
 
     gcs_file = gcs.open(bucket_filename,
                         'w',
