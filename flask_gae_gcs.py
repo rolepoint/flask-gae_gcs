@@ -185,7 +185,7 @@ def save_files(fields, validators=None, retry_params=None, bucket_name=None):
     i = 0
     for name, field in fields:
         value = field.stream.read()
-        filename = re.sub(r'^.*\\', '', field.filename.decode('utf-8'))
+        filename = re.sub(r'^.*\\', '', field.filename)
         result = FileUploadResult(
             name=filename,
             type=field.mimetype,
@@ -318,6 +318,8 @@ def write_to_gcs(data, mime_type, name=None, retry_params=None,
                                                max_delay=5.0,
                                                backoff_factor=2,
                                                max_retry_period=15)
+    if isinstance(name, unicode):
+        name = name.encode('ascii', errors='replace')
 
     options = {}
     if name:
