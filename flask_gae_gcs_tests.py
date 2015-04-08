@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+# coding: utf-8
 import uuid
 import unittest, logging
 from flask import json
@@ -77,6 +77,19 @@ class TestCase(gae_tests.TestCase):
 
   def test_upload_returns_valid_file_result(self):
     data, filename, size = gae_tests.create_test_file('test.jpg')
+    response = app.test_client().post(
+      data={'test': (data, filename)},
+      path='/test_upload',
+      headers={},
+      query_string={})
+    self.assertEqual(200, response.status_code)
+    results = json.loads(response.data)
+    self.assertIsInstance(results, list)
+    self.assertEquals(1, len(results), results)
+    self._assertUploadResult(results[0], filename, size)
+
+  def test_upload_unicode_filename_succeeds(self):
+    data, filename, size = gae_tests.create_test_file(filename=u'têst.png')
     response = app.test_client().post(
       data={'test': (data, filename)},
       path='/test_upload',
