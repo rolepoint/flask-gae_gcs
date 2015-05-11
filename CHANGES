@@ -1,4 +1,8 @@
 flask-gae_gcs Changelog
 =============================
 
+v0.1.1, 2015-05-11 -- Add boolean to writing for forced download
+                      Handle unicode chars for filenames
+                      Tests for unicode named uploads
+
 v0.1.0, 2015-02-20 -- Initial release.
