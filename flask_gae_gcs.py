@@ -13,9 +13,12 @@ import string
 import random
 import logging
 import os
+from cgi import parse_header
+from StringIO import StringIO
 
 import cloudstorage as gcs
 from flask import Response, request
+from werkzeug.datastructures import FileStorage
 from functools import wraps
 from google.appengine.api import app_identity
 
@@ -148,12 +151,15 @@ def upload_files(validators=None, retry_params=None, bucket_name=None):
     def wrapper(fn):
         @wraps(fn)
         def decorated(*args, **kw):
-            return fn(uploads=save_files(
-                          fields=_upload_fields(),
-                          validators=validators,
-                          retry_params=retry_params,
-                          bucket_name=bucket_name
-                          ), *args, **kw)
+            return fn(
+                uploads=save_files(
+                    fields=_upload_fields(),
+                    validators=validators,
+                    retry_params=retry_params,
+                    bucket_name=bucket_name
+                ),
+                *args, **kw
+            )
         return decorated
     return wrapper
 
@@ -217,14 +223,32 @@ def save_files(fields, validators=None, retry_params=None, bucket_name=None):
 
 
 def _upload_fields():
-    '''
+    '''Gets a list of files from the request.
+    Uses Flask's request.files to get all files, unless the Content-Type is
+    `text/csv` or `text/plain`: then returns the request body as a FileStorage
+    object, attempting to use Content-Disposition to get a file name.
+
       :returns: List of tuples of:
-                (file_name, `werkzeug.datastructures.FileStorage`)
+                (field_name, `werkzeug.datastructures.FileStorage`)
     '''
     result = []
-    for key, value in request.files.iteritems():
-        if not isinstance(value, unicode):
-            result.append((key, value))
+
+    content_type = request.headers.get('content-type')
+    mime_type, _ = parse_header(content_type)
+
+    if mime_type in ('text/plain', 'text/csv'):
+        _, params = parse_header(
+            request.headers.get('content-disposition', '')
+        )
+        filename = params.get('filename', 'noname.txt')
+        fileo = FileStorage(stream=StringIO(request.data),
+                            filename=filename,
+                            content_type=request.headers.get('content-type'))
+        result.append(('file', fileo))
+    else:
+        for key, value in request.files.iteritems():
+            if not isinstance(value, unicode):
+                result.append((key, value))
     return result
 
 
