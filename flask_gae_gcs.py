@@ -8,14 +8,12 @@
   :license: BSD, see LICENSE for more details.
 """
 import re
-import time
 import uuid
 import string
 import random
 import logging
 import cloudstorage as gcs
 from flask import Response, request
-from werkzeug import exceptions
 from functools import wraps
 from google.appengine.api import app_identity
 
@@ -23,8 +21,8 @@ __all__ = [
     'WRITE_MAX_RETRIES', 'WRITE_SLEEP_SECONDS', 'DEFAULT_NAME_LEN',
     'MSG_INVALID_FILE_POSTED', 'UPLOAD_MIN_FILE_SIZE', 'UPLOAD_MAX_FILE_SIZE',
     'UPLOAD_ACCEPT_FILE_TYPES', 'ORIGINS', 'OPTIONS', 'HEADERS', 'MIMETYPE',
-    'RemoteResponse', 'FileUploadResultSet', 'FileUploadResult', 'upload_files',
-    'save_files', 'write_to_gcs']
+    'RemoteResponse', 'FileUploadResultSet', 'FileUploadResult',
+    'upload_files', 'save_files', 'write_to_gcs']
 
 #:
 WRITE_MAX_RETRIES = 3
@@ -69,7 +67,6 @@ class RemoteResponse(Response):
         Response.__init__(self, response=response, mimetype=mimetype, **kw)
         self._fixcors()
 
-
     def _fixcors(self):
         self.headers['Access-Control-Allow-Origin'] = ORIGINS
         self.headers['Access-Control-Allow-Methods'] = ', '.join(OPTIONS)
@@ -112,11 +109,9 @@ class FileUploadResult:
         self.value = value
         self.bucket_name = None
 
-
     @property
     def file_info(self):
         return gcs.stat(get_gcs_filename(self.uuid, self.bucket_name))
-
 
     def to_dict(self):
         '''
@@ -128,11 +123,9 @@ class FileUploadResult:
             'uuid': str(self.uuid),
             'name': self.name,
             'type': self.type,
-            'size': self.size,
-            # these two are commented out so the class is easily json serializable..
-            # 'field': self.field,
-            # 'value': self.value,
+            'size': self.size
         }
+
 
 def get_gcs_filename(filename, bucket_name=None):
     if bucket_name:
@@ -168,7 +161,10 @@ def save_files(fields, validators=None, retry_params=None, bucket_name=None):
     each posted file.
 
       :param fields: List of `cgi.FieldStorage` objects.
-      :param validators: List of callable objects.
+      :param validators: List of functions, usually one of validate_min_size,
+                         validate_file_type, validate_max_size included here.
+                         By default validate_min_size is included to make sure
+                         the file is not empty (see UPLOAD_MIN_FILE_SIZE).
       :param retry_params: `RetryParams` object from `cloudstorage`
       :param bucket_name: String of custom bucket name.
 
@@ -177,9 +173,7 @@ def save_files(fields, validators=None, retry_params=None, bucket_name=None):
 
     if validators is None:
         validators = [
-            validate_min_size,
-            # validate_file_type,
-            # validate_max_size,
+            validate_min_size
         ]
     results = FileUploadResultSet()
     i = 0
@@ -290,7 +284,7 @@ def validate_file_type(result, accept_file_types=UPLOAD_ACCEPT_FILE_TYPES):
 
 
 def write_to_gcs(data, mime_type, name=None, retry_params=None,
-    bucket_name=None, force_download=False):
+                 bucket_name=None, force_download=False):
     '''Writes a file to Google Cloud Storage and returns the file name
     if successful.
 
@@ -327,8 +321,7 @@ def write_to_gcs(data, mime_type, name=None, retry_params=None,
 
     if force_download:
         options.update({
-            b'Content-Disposition': 'attachment; filename={}'
-                .format(name)
+            b'Content-Disposition': 'attachment; filename={}'.format(name)
         })
 
     gcs_file = gcs.open(bucket_filename,
