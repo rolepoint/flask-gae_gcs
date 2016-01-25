@@ -12,6 +12,8 @@ import uuid
 import string
 import random
 import logging
+import os
+
 import cloudstorage as gcs
 from flask import Response, request
 from functools import wraps
@@ -160,7 +162,7 @@ def save_files(fields, validators=None, retry_params=None, bucket_name=None):
     '''Returns a list of `FileUploadResult` with UUID, name, type, size for
     each posted file.
 
-      :param fields: List of `cgi.FieldStorage` objects.
+      :param fields: List of `werkzeug.datastructures.FileStorage` objects.
       :param validators: List of functions, usually one of validate_min_size,
                          validate_file_type, validate_max_size included here.
                          By default validate_min_size is included to make sure
@@ -176,7 +178,6 @@ def save_files(fields, validators=None, retry_params=None, bucket_name=None):
             validate_min_size
         ]
     results = FileUploadResultSet()
-    i = 0
     for name, field in fields:
         value = field.stream.read()
         filename = re.sub(r'^.*\\', '', field.filename)
@@ -212,13 +213,13 @@ def save_files(fields, validators=None, retry_params=None, bucket_name=None):
             else:
                 result.successful = False
             results.append(result)
-        i += 1
     return results
 
 
 def _upload_fields():
     '''
-      :returns: List of tuples with the filename & `cgi.FieldStorage` as value.
+      :returns: List of tuples of:
+                (file_name, `werkzeug.datastructures.FileStorage`)
     '''
     result = []
     for key, value in request.files.iteritems():
@@ -229,11 +230,12 @@ def _upload_fields():
 
 def get_field_size(field):
     '''
-      :param field: Instance of `cgi.FieldStorage`.
+      :param field: a file-like object, e.g. instance of
+                    `werkzeug.datastructures.FileStorage`.
       :returns: Integer.
     '''
     try:
-        field.seek(0, 2)  # Seek to the end of the file
+        field.seek(0, os.SEEK_END)  # Seek to the end of the file
         size = field.tell()  # Get the position of EOF
         field.seek(0)  # Reset the file position to the beginning
         return size
@@ -276,7 +278,6 @@ def validate_file_type(result, accept_file_types=UPLOAD_ACCEPT_FILE_TYPES):
 
       :returns: Boolean, True if field validates.
     '''
-    # only allow images to be posted to this handler
     if not accept_file_types.match(result.type):
         result.field.error_msg = 'accept_file_types'
         return False
