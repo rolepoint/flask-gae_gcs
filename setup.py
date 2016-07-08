@@ -16,7 +16,7 @@ links
 """
 from setuptools import setup
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 with open("requirements.txt", "r") as f:
   requires = f.readlines()

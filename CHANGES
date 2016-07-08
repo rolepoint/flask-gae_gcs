@@ -1,6 +1,9 @@
 flask-gae_gcs Changelog
 =============================
 
+v0.2.0, 2016-07-08 -- Accept text/csv and text/plain content types
+                      for uploads
+
 v0.1.1, 2015-05-11 -- Add boolean to writing for forced download
                       Handle unicode chars for filenames
                       Tests for unicode named uploads
