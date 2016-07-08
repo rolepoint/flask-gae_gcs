@@ -8,14 +8,17 @@
   :license: BSD, see LICENSE for more details.
 """
 import re
-import time
 import uuid
 import string
 import random
 import logging
+import os
+from cgi import parse_header
+from StringIO import StringIO
+
 import cloudstorage as gcs
 from flask import Response, request
-from werkzeug import exceptions
+from werkzeug.datastructures import FileStorage
 from functools import wraps
 from google.appengine.api import app_identity
 
@@ -23,8 +26,8 @@ __all__ = [
     'WRITE_MAX_RETRIES', 'WRITE_SLEEP_SECONDS', 'DEFAULT_NAME_LEN',
     'MSG_INVALID_FILE_POSTED', 'UPLOAD_MIN_FILE_SIZE', 'UPLOAD_MAX_FILE_SIZE',
     'UPLOAD_ACCEPT_FILE_TYPES', 'ORIGINS', 'OPTIONS', 'HEADERS', 'MIMETYPE',
-    'RemoteResponse', 'FileUploadResultSet', 'FileUploadResult', 'upload_files',
-    'save_files', 'write_to_gcs']
+    'RemoteResponse', 'FileUploadResultSet', 'FileUploadResult',
+    'upload_files', 'save_files', 'write_to_gcs']
 
 #:
 WRITE_MAX_RETRIES = 3
@@ -69,7 +72,6 @@ class RemoteResponse(Response):
         Response.__init__(self, response=response, mimetype=mimetype, **kw)
         self._fixcors()
 
-
     def _fixcors(self):
         self.headers['Access-Control-Allow-Origin'] = ORIGINS
         self.headers['Access-Control-Allow-Methods'] = ', '.join(OPTIONS)
@@ -112,11 +114,9 @@ class FileUploadResult:
         self.value = value
         self.bucket_name = None
 
-
     @property
     def file_info(self):
         return gcs.stat(get_gcs_filename(self.uuid, self.bucket_name))
-
 
     def to_dict(self):
         '''
@@ -128,11 +128,9 @@ class FileUploadResult:
             'uuid': str(self.uuid),
             'name': self.name,
             'type': self.type,
-            'size': self.size,
-            # these two are commented out so the class is easily json serializable..
-            # 'field': self.field,
-            # 'value': self.value,
+            'size': self.size
         }
+
 
 def get_gcs_filename(filename, bucket_name=None):
     if bucket_name:
@@ -153,12 +151,15 @@ def upload_files(validators=None, retry_params=None, bucket_name=None):
     def wrapper(fn):
         @wraps(fn)
         def decorated(*args, **kw):
-            return fn(uploads=save_files(
-                          fields=_upload_fields(),
-                          validators=validators,
-                          retry_params=retry_params,
-                          bucket_name=bucket_name
-                          ), *args, **kw)
+            return fn(
+                uploads=save_files(
+                    fields=_upload_fields(),
+                    validators=validators,
+                    retry_params=retry_params,
+                    bucket_name=bucket_name
+                ),
+                *args, **kw
+            )
         return decorated
     return wrapper
 
@@ -167,8 +168,11 @@ def save_files(fields, validators=None, retry_params=None, bucket_name=None):
     '''Returns a list of `FileUploadResult` with UUID, name, type, size for
     each posted file.
 
-      :param fields: List of `cgi.FieldStorage` objects.
-      :param validators: List of callable objects.
+      :param fields: List of `werkzeug.datastructures.FileStorage` objects.
+      :param validators: List of functions, usually one of validate_min_size,
+                         validate_file_type, validate_max_size included here.
+                         By default validate_min_size is included to make sure
+                         the file is not empty (see UPLOAD_MIN_FILE_SIZE).
       :param retry_params: `RetryParams` object from `cloudstorage`
       :param bucket_name: String of custom bucket name.
 
@@ -177,12 +181,9 @@ def save_files(fields, validators=None, retry_params=None, bucket_name=None):
 
     if validators is None:
         validators = [
-            validate_min_size,
-            # validate_file_type,
-            # validate_max_size,
+            validate_min_size
         ]
     results = FileUploadResultSet()
-    i = 0
     for name, field in fields:
         value = field.stream.read()
         filename = re.sub(r'^.*\\', '', field.filename)
@@ -218,28 +219,47 @@ def save_files(fields, validators=None, retry_params=None, bucket_name=None):
             else:
                 result.successful = False
             results.append(result)
-        i += 1
     return results
 
 
 def _upload_fields():
-    '''
-      :returns: List of tuples with the filename & `cgi.FieldStorage` as value.
+    '''Gets a list of files from the request.
+    Uses Flask's request.files to get all files, unless the Content-Type is
+    `text/csv` or `text/plain`: then returns the request body as a FileStorage
+    object, attempting to use Content-Disposition to get a file name.
+
+      :returns: List of tuples of:
+                (field_name, `werkzeug.datastructures.FileStorage`)
     '''
     result = []
-    for key, value in request.files.iteritems():
-        if not isinstance(value, unicode):
-            result.append((key, value))
+
+    content_type = request.headers.get('content-type')
+    mime_type, _ = parse_header(content_type)
+
+    if mime_type in ('text/plain', 'text/csv'):
+        _, params = parse_header(
+            request.headers.get('content-disposition', '')
+        )
+        filename = params.get('filename', 'noname.txt')
+        fileo = FileStorage(stream=StringIO(request.data),
+                            filename=filename,
+                            content_type=request.headers.get('content-type'))
+        result.append(('file', fileo))
+    else:
+        for key, value in request.files.iteritems():
+            if not isinstance(value, unicode):
+                result.append((key, value))
     return result
 
 
 def get_field_size(field):
     '''
-      :param field: Instance of `cgi.FieldStorage`.
+      :param field: a file-like object, e.g. instance of
+                    `werkzeug.datastructures.FileStorage`.
       :returns: Integer.
     '''
     try:
-        field.seek(0, 2)  # Seek to the end of the file
+        field.seek(0, os.SEEK_END)  # Seek to the end of the file
         size = field.tell()  # Get the position of EOF
         field.seek(0)  # Reset the file position to the beginning
         return size
@@ -282,7 +302,6 @@ def validate_file_type(result, accept_file_types=UPLOAD_ACCEPT_FILE_TYPES):
 
       :returns: Boolean, True if field validates.
     '''
-    # only allow images to be posted to this handler
     if not accept_file_types.match(result.type):
         result.field.error_msg = 'accept_file_types'
         return False
@@ -290,7 +309,7 @@ def validate_file_type(result, accept_file_types=UPLOAD_ACCEPT_FILE_TYPES):
 
 
 def write_to_gcs(data, mime_type, name=None, retry_params=None,
-    bucket_name=None, force_download=False):
+                 bucket_name=None, force_download=False):
     '''Writes a file to Google Cloud Storage and returns the file name
     if successful.
 
@@ -327,8 +346,7 @@ def write_to_gcs(data, mime_type, name=None, retry_params=None,
 
     if force_download:
         options.update({
-            b'Content-Disposition': 'attachment; filename={}'
-                .format(name)
+            b'Content-Disposition': 'attachment; filename={}'.format(name)
         })
 
     gcs_file = gcs.open(bucket_filename,
