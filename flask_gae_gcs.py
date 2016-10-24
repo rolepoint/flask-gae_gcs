@@ -232,11 +232,13 @@ def _upload_fields():
                 (field_name, `werkzeug.datastructures.FileStorage`)
     '''
     result = []
-
     content_type = request.headers.get('content-type')
     mime_type, _ = parse_header(content_type)
 
-    if mime_type in ('text/plain', 'text/csv'):
+    # special case for  application/xml; name="Sample 9.16.16.csv"
+    is_app_xml_sap = "application/xml" in content_type
+
+    if mime_type in ('text/plain', 'text/csv') or is_app_xml_sap:
         _, params = parse_header(
             request.headers.get('content-disposition', '')
         )

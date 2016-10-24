@@ -129,6 +129,16 @@ class TestCase(gae_tests.TestCase):
     self.assertIsInstance(results, list)
     self.assertEquals(0, len(results), results)
 
+  def test_upload_returns_valid_file_result_for_application_xml(self):
+    response = app.test_client().post(
+      data='xxx',
+      path='/test_upload',
+      headers={'content-type': 'application/xml; name="Sample 9.16.16.csv'},
+      query_string={})
+    self.assertEqual(200, response.status_code)
+    results = json.loads(response.data)
+    self.assertIsInstance(results, list)
+    self.assertEquals(1, len(results), results)
 
 if __name__ == '__main__':
   unittest.main()
