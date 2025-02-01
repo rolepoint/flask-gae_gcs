@@ -41,7 +41,7 @@ setup(
   zip_safe=False,
   platforms='any',
   install_requires=[
-    'flask==0.9',
+    'flask==2.2.5',
   ],
   tests_require=[
     'flask_gae_tests==1.0.1',

@@ -1,5 +1,5 @@
 blinker==1.4
-Flask==0.9
+Flask==2.2.5
 flask-gae-tests==1.0.2
 GoogleAppEngineCloudStorageClient==1.9.22.1
 Jinja2==2.8
